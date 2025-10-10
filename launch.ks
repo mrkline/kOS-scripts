@@ -33,7 +33,7 @@ LOCK STEERING to HEADING(headingOut, pitchOut).
 
 
 WAIT UNTIL SHIP:VELOCITY:SURFACE:MAG > 100.
-SET pitchOut TO 95.
+SET pitchOut TO 100.
 PRINT "Pitchback, throttling for Max Q".
 DECLARE LOCAL maxQPid is PIDLOOP(10, 3, 3, 0, 1).
 SET maxQPid:SETPOINT to 0.25.
