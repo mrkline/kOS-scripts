@@ -54,7 +54,6 @@ PRINT "Throttling to hold " + desiredEta + "s to apogee until 10k prior".
 DECLARE LOCAL apogeePid is PIDLOOP(0.5, 0, 0.05, 0, 1).
 SET apogeePid:SETPOINT TO desiredEta.
 UNTIL SHIP:ORBIT:APOAPSIS >= desiredAp OR
-      (pitchAboveHorizon() < 1 AND throttleOut = 0) OR
       (pitchAboveHorizon() > 5 AND SHIP:ORBIT:ETA:APOAPSIS < desperateEta) {
     // Reduce our ETA as we get closer to the desired altitude.
     DECLARE LOCAL etaScale IS SQRT(MIN(1.0, (desiredAp - SHIP:ALTITUDE) / 10000)).
@@ -70,7 +69,7 @@ IF SHIP:ORBIT:ETA:APOAPSIS <= desperateEta {
     PRINT "Insufficient initial burn, pitching for apogee".
     // Pitch up to 30 segerees above the horizon.
     // The LOCK "cooked" steering is already a PID loop, don't drive it with one.
-    UNTIL SHIP:ORBIT:APOAPSIS >= desiredAp OR (pitchAboveHorizon() < 1 AND throttleOut = 0) {
+    UNTIL SHIP:ORBIT:APOAPSIS >= desiredAp {
         DECLARE LOCAL etaScale IS SQRT(MIN(1.0, (desiredAp - SHIP:ALTITUDE) / 10000)).
         SET apogeePid:SETPOINT TO desiredEta * etaScale.
         DECLARE LOCAL pitchUpdate IS MAX(0, MIN(30, apogeePid:SETPOINT - SHIP:ORBIT:ETA:APOAPSIS)).
@@ -78,14 +77,6 @@ IF SHIP:ORBIT:ETA:APOAPSIS <= desperateEta {
         SET throttleOut TO apogeePid:UPDATE(TIME:SECONDS, SHIP:ORBIT:ETA:APOAPSIS).
         SET pitchOut TO 180 - pitchUpdate.
     }
-}
-
-PRINT "Gravity turn complete, raising apoapsis to " + desiredAp.
-LOCK THROTTLE to 1.
-SET pitchOut to 180.
-UNTIL (SHIP:ORBIT:APOAPSIS >= desiredAp) {
-        tick().
-        SET pitchOut TO 180 - pitchAboveHorizon().
 }
 
 PRINT "Orbital insertion complete.".
