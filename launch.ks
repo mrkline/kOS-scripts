@@ -48,19 +48,17 @@ UNTIL (SHIP:VELOCITY:SURFACE:MAG > 300 AND SHIP:Q < lastPressure) {
 
 // Larger number is a steeper ascent.
 DECLARE LOCAL desiredEta IS 45.
-// When do we want to give up on max throttle and start pitching?
-DECLARE LOCAL desperateEta IS desiredEta * 3 / 4.
 
 PRINT "Throttling to hold " + desiredEta + "s to apogee until 10k prior".
 DECLARE LOCAL apogeePid is PIDLOOP(0.5, 0, 0.05, 0, 1).
 SET apogeePid:SETPOINT TO desiredEta.
 DECLARE LOCAL lastEta IS 0.
 UNTIL SHIP:ORBIT:APOAPSIS >= desiredAp OR
-      (SHIP:ORBIT:ETA:APOAPSIS < lastEta AND SHIP:ORBIT:ETA:APOAPSIS < desperateEta) {
+      // When to give up and start pitching, see below. (Give a few seconds for staging.)
+      (SHIP:ORBIT:ETA:APOAPSIS < lastEta AND SHIP:ORBIT:ETA:APOAPSIS < apogeePid:SETPOINT - 5) {
     // Reduce our ETA as we get closer to the desired altitude.
     DECLARE LOCAL etaScale IS SQRT(MIN(1.0, (desiredAp - SHIP:ALTITUDE) / 10000)).
     SET apogeePid:SETPOINT TO desiredEta * etaScale.
-    SET desperateEta TO desiredEta * etaScale * 3 /4.
     SET lastEta to SHIP:ORBIT:ETA:APOAPSIS.
     tick().
     SET throttleOut TO apogeePid:UPDATE(TIME:SECONDS, SHIP:ORBIT:ETA:APOAPSIS).
@@ -68,7 +66,7 @@ UNTIL SHIP:ORBIT:APOAPSIS >= desiredAp OR
     SET pitchOut TO 180 - pitchAboveHorizon().
 }
 
-IF SHIP:ORBIT:ETA:APOAPSIS <= desperateEta {
+IF SHIP:ORBIT:ETA:APOAPSIS < lastEta AND SHIP:ORBIT:ETA:APOAPSIS < apogeePid:SETPOINT - 5 {
     PRINT "Insufficient initial burn, pitching for apogee".
     // Pitch up to 30 segerees above the horizon.
     // The LOCK "cooked" steering is already a PID loop, don't drive it with one.
