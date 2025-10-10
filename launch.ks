@@ -50,7 +50,7 @@ UNTIL (SHIP:VELOCITY:SURFACE:MAG > 300 AND SHIP:Q < lastPressure) {
 DECLARE LOCAL desiredEta IS 45.
 
 PRINT "Throttling to hold " + desiredEta + "s to apogee until 10k prior".
-DECLARE LOCAL apogeePid is PIDLOOP(0.5, 0, 0.05, 0, 1).
+DECLARE LOCAL apogeePid is PIDLOOP(1, 0, 0.05, 0, 1).
 SET apogeePid:SETPOINT TO desiredEta.
 DECLARE LOCAL lastEta IS 0.
 UNTIL SHIP:ORBIT:APOAPSIS >= desiredAp OR
