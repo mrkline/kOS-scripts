@@ -80,6 +80,13 @@ IF SHIP:ORBIT:ETA:APOAPSIS < lastEta AND SHIP:ORBIT:ETA:APOAPSIS < apogeePid:SET
     }
 }
 
+PRINT "Gravity turn complete, raising apoapsis to " + desiredAp.
+LOCK THROTTLE to 1.
+SET pitchOut to 179.
+UNTIL (SHIP:ALTITUDE >= desiredAp) {
+    tick().
+}
+
 PRINT "Orbital insertion complete.".
 LOCK THROTTLE to 0.
 
