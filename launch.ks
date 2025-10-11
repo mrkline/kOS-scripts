@@ -46,23 +46,22 @@ UNTIL (SHIP:VELOCITY:SURFACE:MAG > 300 AND SHIP:Q < lastPressure) {
     SET lastPressure to SHIP:Q.
 }
 
-// Larger number is a steeper ascent.
-DECLARE LOCAL desiredEta IS 45.
-
-PRINT "Throttling to hold " + desiredEta + "s to apogee until 10k prior".
-DECLARE LOCAL apogeePid is PIDLOOP(1, 0, 0.05, 0, 1).
-SET apogeePid:SETPOINT TO desiredEta.
+PRINT "Throttling to hold " + desiredEta() + "s to apogee".
+DECLARE LOCAL apogeePid is PIDLOOP(1, 0, 0.05, 0.05, 1).
+SET apogeePid:SETPOINT TO desiredEta().
 DECLARE LOCAL lastEta IS 0.
 UNTIL SHIP:ORBIT:APOAPSIS >= desiredAp OR
       // When to give up and start pitching, see below. (Give a few seconds for staging.)
       (SHIP:ORBIT:ETA:APOAPSIS < lastEta AND SHIP:ORBIT:ETA:APOAPSIS < apogeePid:SETPOINT - 5) {
-    // Reduce our ETA as we get closer to the desired altitude.
-    DECLARE LOCAL etaScale IS SQRT(MIN(1.0, (desiredAp - SHIP:ALTITUDE) / 10000)).
-    SET apogeePid:SETPOINT TO desiredEta * etaScale.
-    SET lastEta to SHIP:ORBIT:ETA:APOAPSIS.
     tick().
-    SET throttleOut TO apogeePid:UPDATE(TIME:SECONDS, SHIP:ORBIT:ETA:APOAPSIS).
-    // Follow the ballistic arc.
+    SET lastEta to SHIP:ORBIT:ETA:APOAPSIS.
+    SET apogeePid:SETPOINT TO desiredEta().
+    SET throttleOut TO MIN(
+        maxQPid:UPDATE(TIME:SECONDS, SHIP:Q),
+        apogeePid:UPDATE(TIME:SECONDS, SHIP:ORBIT:ETA:APOAPSIS)
+    ).
+    // Follow the ballistic arc, holding a bit nose high so we don't shallow out our burn
+    // and have the throttle drop to 0.
     SET pitchOut TO 180 - pitchAboveHorizon().
 }
 
@@ -71,24 +70,43 @@ IF SHIP:ORBIT:ETA:APOAPSIS < lastEta AND SHIP:ORBIT:ETA:APOAPSIS < apogeePid:SET
     // Pitch up to 30 segerees above the horizon.
     // The LOCK "cooked" steering is already a PID loop, don't drive it with one.
     UNTIL SHIP:ORBIT:APOAPSIS >= desiredAp {
-        DECLARE LOCAL etaScale IS SQRT(MIN(1.0, (desiredAp - SHIP:ALTITUDE) / 10000)).
-        SET apogeePid:SETPOINT TO desiredEta * etaScale.
-        DECLARE LOCAL pitchUpdate IS MAX(0, MIN(30, apogeePid:SETPOINT - SHIP:ORBIT:ETA:APOAPSIS)).
         tick().
+        SET apogeePid:SETPOINT TO desiredEta().
         SET throttleOut TO apogeePid:UPDATE(TIME:SECONDS, SHIP:ORBIT:ETA:APOAPSIS).
-        SET pitchOut TO 180 - pitchUpdate.
+        DECLARE LOCAL pitchUpdate IS CLAMP(0, 30, apogeePid:SETPOINT - SHIP:ORBIT:ETA:APOAPSIS).
+        SET pitchOut TO 180 - (pitchAboveHorizon() + pitchUpdate).
     }
 }
 
-PRINT "Gravity turn complete, raising apoapsis to " + desiredAp.
-LOCK THROTTLE to 1.
-SET pitchOut to 179.
-UNTIL (SHIP:ALTITUDE >= desiredAp) {
+PRINT "Gravity turn complete".
+SET pitchOut TO 180.
+SET throttleOut TO 0.
+
+WAIT UNTIL SHIP:ORBIT:ETA:APOAPSIS <= 1.
+PRINT "Circularizing orbit".
+SET throttleOut TO 1.
+UNTIL (SHIP:ORBIT:APOAPSIS - SHIP:ORBIT:PERIAPSIS) < 1000 {
     tick().
 }
 
 PRINT "Orbital insertion complete.".
 LOCK THROTTLE to 0.
+
+FUNCTION CLAMP {
+    PARAMETER lo.
+    PARAMETER hi.
+    PARAMETER val.
+    RETURN MAX(lo, MIN(hi, val)).
+}
+
+// Reduce our ETA as we get closer to the desired altitude,
+// but don't let it drop to 0 - then we over-shallow our climb.
+FUNCTION desiredEta {
+    // Larger number is a steeper ascent.
+    DECLARE LOCAL starting IS 60.
+
+    RETURN starting * CLAMP(0.5, 1, (desiredAp - SHIP:ALTITUDE) / 20000).
+}
 
 // From https://github.com/KSP-KOS/KSLib/blob/master/library/lib_navball.ks
 FUNCTION pitchAboveHorizon {
