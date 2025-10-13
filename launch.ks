@@ -33,7 +33,6 @@ LOCK STEERING to HEADING(headingOut, pitchOut).
 
 
 WAIT UNTIL SHIP:VELOCITY:SURFACE:MAG > 100.
-SET pitchOut TO 100.
 PRINT "Pitchback, throttling for Max Q".
 DECLARE LOCAL maxQPid is PIDLOOP(10, 3, 3, 0, 1).
 SET maxQPid:SETPOINT to 0.25.
@@ -44,6 +43,7 @@ UNTIL (SHIP:VELOCITY:SURFACE:MAG > 300 AND SHIP:Q < lastPressure) {
     tick().
     SET throttleOut to maxQPid:UPDATE(TIME:SECONDS, SHIP:Q).
     SET lastPressure to SHIP:Q.
+    setPitch(pitchAboveHorizon()).
 }
 
 PRINT "Throttling to hold " + desiredEta() + "s to apogee".
@@ -60,9 +60,7 @@ UNTIL SHIP:ORBIT:APOAPSIS >= desiredAp OR
         maxQPid:UPDATE(TIME:SECONDS, SHIP:Q),
         apogeePid:UPDATE(TIME:SECONDS, SHIP:ORBIT:ETA:APOAPSIS)
     ).
-    // Follow the ballistic arc, holding a bit nose high so we don't shallow out our burn
-    // and have the throttle drop to 0.
-    SET pitchOut TO 180 - pitchAboveHorizon().
+    setPitch(pitchAboveHorizon()).
 }
 
 IF SHIP:ORBIT:ETA:APOAPSIS < lastEta AND SHIP:ORBIT:ETA:APOAPSIS < apogeePid:SETPOINT - 5 {
@@ -74,19 +72,8 @@ IF SHIP:ORBIT:ETA:APOAPSIS < lastEta AND SHIP:ORBIT:ETA:APOAPSIS < apogeePid:SET
         SET apogeePid:SETPOINT TO desiredEta().
         SET throttleOut TO apogeePid:UPDATE(TIME:SECONDS, SHIP:ORBIT:ETA:APOAPSIS).
         DECLARE LOCAL pitchUpdate IS CLAMP(0, 30, apogeePid:SETPOINT - SHIP:ORBIT:ETA:APOAPSIS).
-        SET pitchOut TO 180 - (pitchAboveHorizon() + pitchUpdate).
+        setPitch(pitchAboveHorizon() + pitchUpdate).
     }
-}
-
-PRINT "Gravity turn complete".
-SET pitchOut TO 180.
-SET throttleOut TO 0.
-
-WAIT UNTIL SHIP:ORBIT:ETA:APOAPSIS <= 1.
-PRINT "Circularizing orbit".
-SET throttleOut TO 1.
-UNTIL (SHIP:ORBIT:APOAPSIS - SHIP:ORBIT:PERIAPSIS) < 1000 {
-    tick().
 }
 
 PRINT "Orbital insertion complete.".
@@ -99,13 +86,15 @@ FUNCTION CLAMP {
     RETURN MAX(lo, MIN(hi, val)).
 }
 
-// Reduce our ETA as we get closer to the desired altitude,
-// but don't let it drop to 0 - then we over-shallow our climb.
 FUNCTION desiredEta {
     // Larger number is a steeper ascent.
-    DECLARE LOCAL starting IS 60.
+    DECLARE LOCAL starting IS 45.
+    RETURN starting * CLAMP(0, 1, SQRT((desiredAp - SHIP:ORBIT:APOAPSIS) / 10000)).
+}
 
-    RETURN starting * CLAMP(0.5, 1, (desiredAp - SHIP:ALTITUDE) / 20000).
+FUNCTION setPitch {
+    PARAMETER p.
+    SET pitchOut TO CLAMP(95, 180, 180 - p).
 }
 
 // From https://github.com/KSP-KOS/KSLib/blob/master/library/lib_navball.ks
