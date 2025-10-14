@@ -2,8 +2,9 @@
 @CLOBBERBUILTINS OFF.
 
 PARAMETER downrange IS 90.
-PARAMETER desiredAp IS 80000.
+PARAMETER desiredApKilo IS 80.
 
+DECLARE LOCAL desiredAp IS desiredApKilo * 1000.
 DECLARE LOCAL headingOut IS MOD(downrange + 180, 360).
 
 CLEARSCREEN.
@@ -76,6 +77,17 @@ IF SHIP:ORBIT:ETA:APOAPSIS < lastEta AND SHIP:ORBIT:ETA:APOAPSIS < apogeePid:SET
     }
 }
 
+IF SHIP:ORBIT:ETA:APOAPSIS < 120 {
+    PRINT "Circularizing orbit".
+    UNTIL SHIP:ORBIT:PERIAPSIS >= desiredAp {
+        tick().
+        SET apogeePid:SETPOINT TO desiredEta().
+        SET throttleOut TO apogeePid:UPDATE(TIME:SECONDS, SHIP:ORBIT:ETA:APOAPSIS).
+        DECLARE LOCAL pitchUpdate IS CLAMP(-20, 20, (SHIP:ORBIT:ETA:APOAPSIS - desiredAp) / 10000).
+        setPitch(pitchAboveHorizon() + pitchUpdate).
+    }
+}
+
 PRINT "Orbital insertion complete.".
 LOCK THROTTLE to 0.
 
@@ -94,7 +106,7 @@ FUNCTION desiredEta {
 
 FUNCTION setPitch {
     PARAMETER p.
-    SET pitchOut TO CLAMP(95, 180, 180 - p).
+    SET pitchOut TO CLAMP(95, 210, 180 - p).
 }
 
 // From https://github.com/KSP-KOS/KSLib/blob/master/library/lib_navball.ks
