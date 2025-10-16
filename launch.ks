@@ -13,7 +13,8 @@ PARAMETER desiredApKilo IS 80.
 
 DECLARE LOCAL desiredAp IS desiredApKilo * 1000.
 DECLARE LOCAL headingOut IS 0.
-DECLARE LOCAL orbitalVelocity TO CREATEORBIT(0, 0, BODY:RADIUS + desiredAp, 0, 0, 0, 0, BODY):VELOCITY:ORBIT:MAG.
+DECLARE LOCAL initialOrbitalVelocity IS VELOCITY:ORBIT:MAG. 
+DECLARE LOCAL orbitalVelocity IS CREATEORBIT(0, 0, BODY:RADIUS + desiredAp, 0, 0, 0, 0, BODY):VELOCITY:ORBIT:MAG.
 
 WAIT UNTIL SHIP:UNPACKED.
 
@@ -24,8 +25,35 @@ LOCK STEERING to HEADING(headingOut, pitchOut).
 DECLARE LOCAL throttleOut IS 0.
 LOCK THROTTLE TO throttleOut.
 
-DECLARE LOCAL startTime TO TIME:SECONDS + 5.
-DECLARE LOCAL staritngDV TO SHIP:DELTAV:VACUUM.
+DECLARE LOCAL startTime IS TIME:SECONDS + 5.
+DECLARE LOCAL staritngDV IS SHIP:DELTAV:VACUUM.
+
+// Questionable per-tick integration
+DECLARE LOCAL expendedDeltaV IS 0.
+DECLARE LOCAL gravityLosses IS 0.
+DECLARE LOCAL steeringLosses IS 0.
+
+DECLARE LOCAL lastTick IS 0.
+WHEN TIME:SECONDS <> lastTick THEN {
+    IF lastTick = 0 {
+        SET lastTick TO TIME:SECONDS.
+        RETURN TRUE.
+    }
+    DECLARE LOCAL dt IS TIME:SECONDS - lastTick.
+    DECLARE LOCAL dv IS SHIP:THRUST / SHIP:MASS * dt.
+    DECLARE LOCAL gMag IS CONSTANT:G * BODY:MASS / (BODY:RADIUS + SHIP:ALTITUDE) ^ 2.
+    DECLARE LOCAL g IS -BODY:POSITION:NORMALIZED * gMag.
+    DECLARE LOCAL vel IS SHIP:VELOCITY:ORBIT.
+    DECLARE LOCAL vHat IS vel:NORMALIZED.
+    DECLARE LOCAL dir IS SHIP:FACING:FOREVECTOR.
+
+    SET expendedDeltaV TO expendedDeltaV + dv.
+    SET gravityLosses TO gravityLosses + VDOT(vHat, g) * dt.
+    SET steeringLosses TO steeringLosses + dv * (1 - VDOT(vHat, dir:NORMALIZED)).
+
+    SET lastTick TO TIME:SECONDS.
+    RETURN TRUE.
+}
 
 // TUI render loop
 WHEN TIME:SECONDS - lastScreenUpdate > 1 THEN {
@@ -46,7 +74,14 @@ WHEN TIME:SECONDS - lastScreenUpdate > 1 THEN {
         + " (" + ROUND(SHIP:ORBIT:APOAPSIS / desiredAp * 100)  + "%)" AT (0, 7).
     PRINT "PE: " + MAX(0, ROUND(SHIP:ORBIT:PERIAPSIS)) AT (0, 8).
 
-    PRINT "DV SPENT: " + ROUND(staritngDV - SHIP:DELTAV:VACUUM) AT (0, 10).
+    PRINT "DV SPENT:   " + ROUND(expendedDeltaV) AT (0, 10).
+    PRINT "G LOSS:     " + ROUND(gravityLosses) AT (0, 11).
+    DECLARE LOCAL dV IS SHIP:VELOCITY:ORBIT:MAG - initialOrbitalVelocity.
+    PRINT "DRAG LOSS:  " + ROUND(expendedDeltaV - dv - gravityLosses - steeringLosses) AT (0, 12).
+    PRINT "STEER LOSS: " + ROUND(steeringLosses) AT (0, 13).
+
+    DECLARE LOCAL gMag IS CONSTANT:G * BODY:MASS / (BODY:RADIUS + SHIP:ALTITUDE) ^ 2.
+    PRINT "G: " + ROUND(gMag, 2) AT (0, 15).
     SET lastScreenUpdate TO TIME:SECONDS.
     PRESERVE.
 }
@@ -95,12 +130,12 @@ FUNCTION CLAMP {
 FUNCTION desiredEta {
     // Larger number is a steeper ascent.
     DECLARE LOCAL starting IS 45.
-    RETURN starting * CLAMP(0, 1, (desiredAp - SHIP:ALTITUDE) / 20000).
+    RETURN starting * CLAMP(2 / 3, 1, (desiredAp - SHIP:ALTITUDE) / 10000).
 }
 
 FUNCTION setPitch {
     PARAMETER p.
-    SET pitchOut TO CLAMP(100, 175, 180 - p).
+    SET pitchOut TO CLAMP(100, 170, 180 - p).
 }
 
 // From https://github.com/KSP-KOS/KSLib/blob/master/library/lib_navball.ks
