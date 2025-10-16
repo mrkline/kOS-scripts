@@ -19,7 +19,6 @@ LOCK STEERING TO np.
 
 DECLARE LOCAL tset IS 0.
 LOCK THROTTLE TO tset.
-WAIT UNTIL VANG(np, SHIP:FACING:VECTOR) < 0.25.
 WAIT UNTIL nd:ETA <= (burn_duration / 2).
 
 DECLARE LOCAL done IS False.
@@ -39,7 +38,7 @@ UNTIL done {
     // Throttle is 100% until there is less than a second of burn left.
     SET tset TO CLAMP(0.05, 1, SQRT(np:MAG / max_acc)).
 }
-print "End burn, remain dv " + round(nd:deltav:mag,1) + "m/s, vdot: " + round(vdot(dv0, nd:deltav),1).
+print "End burn, remain dv " + round(nd:deltav:mag,1) + "m/s".
 
 FUNCTION CLAMP {
     PARAMETER lo.
