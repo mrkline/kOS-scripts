@@ -1,95 +1,89 @@
 @LAZYGLOBAL OFF.
 @CLOBBERBUILTINS OFF.
 
+// Vain attempt to damp oscillations on long ships:
+SET STEERINGMANAGER:PITCHTS TO 10.
+SET STEERINGMANAGER:YAWTS TO 10.
+SET STEERINGMANAGER:ROLLTS TO 5.
+SET STEERINGMANAGER:PITCHPID:KD TO 0.1.
+SET STEERINGMANAGER:YAWPID:KD TO 0.1.
+
 PARAMETER downrange IS 90.
 PARAMETER desiredApKilo IS 80.
 
 DECLARE LOCAL desiredAp IS desiredApKilo * 1000.
-DECLARE LOCAL headingOut IS MOD(downrange + 180, 360).
+DECLARE LOCAL headingOut IS 0.
+DECLARE LOCAL orbitalVelocity TO CREATEORBIT(0, 0, BODY:RADIUS + desiredAp, 0, 0, 0, 0, BODY):VELOCITY:ORBIT:MAG.
 
-CLEARSCREEN.
 WAIT UNTIL SHIP:UNPACKED.
 
+DECLARE LOCAL currentStatus IS "".
+DECLARE LOCAL lastScreenUpdate IS 0.
+DECLARE LOCAL pitchOut IS 90.
+LOCK STEERING to HEADING(headingOut, pitchOut).
 DECLARE LOCAL throttleOut IS 0.
 LOCK THROTTLE TO throttleOut.
 
-PRINT "Heading " + downrange + ", apoapsis " + desiredAp.
-PRINT "T-MINUS".
-FROM {LOCAL countdown IS 5.} UNTIL countdown = 0 STEP {SET countdown TO countdown - 1.} DO {
-    PRINT countdown.
-    WAIT 1.
+DECLARE LOCAL startTime TO TIME:SECONDS + 5.
+DECLARE LOCAL staritngDV TO SHIP:DELTAV:VACUUM.
+
+// TUI render loop
+WHEN TIME:SECONDS - lastScreenUpdate > 1 THEN {
+    CLEARSCREEN.
+    PRINT currentStatus AT(0, 0).
+    PRINT "Heading " + downrange + ", apoapsis " + desiredAp AT (0, 1).
+    IF TIME:SECONDS - startTime > 0 {
+        PRINT "T+" + FLOOR(TIME:SECONDS - startTime) AT (0, 2).
+    } ELSE {
+        PRINT "T" + FLOOR(TIME:SECONDS - startTime) AT (0, 3).
+    }
+
+    PRINT "HEADING: " + ROUND(MOD(headingOut + 180, 360)) AT (0, 4).
+    PRINT "PITCH: " + ROUND(180 - pitchOut, 2) AT (0, 5).
+    PRINT "VEL/ORB: " + ROUND(SHIP:VELOCITY:ORBIT:MAG) + "/" + ROUND(orbitalVelocity)
+        + " (" + ROUND(SHIP:VELOCITY:ORBIT:MAG / orbitalVelocity * 100) + "%)" AT (0, 6).
+    PRINT "AP: " + ROUND(SHIP:ORBIT:APOAPSIS)
+        + " (" + ROUND(SHIP:ORBIT:APOAPSIS / desiredAp * 100)  + "%)" AT (0, 7).
+    PRINT "PE: " + MAX(0, ROUND(SHIP:ORBIT:PERIAPSIS)) AT (0, 8).
+
+    PRINT "DV SPENT: " + ROUND(staritngDV - SHIP:DELTAV:VACUUM) AT (0, 10).
+    SET lastScreenUpdate TO TIME:SECONDS.
+    PRESERVE.
 }
-PRINT "Ignition".
+
+SET currentStatus TO "Countdown".
+WAIT UNTIL TIME:SECONDS - startTime >= 0.
+SET currentStatus TO "Ignition".
 SET throttleOut TO 1.
-LOCK STEERING to HEADING(0, 90). // Hold attitude until we clear the tower.
 STAGE.
-WAIT 1.
-PRINT "The clock is running!".
 
-DECLARE LOCAL tower IS SHIP:BOUNDS:SIZE:Z * 2.
+DECLARE LOCAL tower IS SHIP:BOUNDS:SIZE:Z * 2.5.
 WAIT UNTIL ALT:RADAR > tower.
-PRINT "Cleared the tower, starting roll program".
-DECLARE LOCAL pitchOut IS 90.
-LOCK STEERING to HEADING(headingOut, pitchOut).
-
+SET currentStatus TO "Roll program".
+SET headingOut TO MOD(downrange + 180, 360).
 
 WAIT UNTIL SHIP:VELOCITY:SURFACE:MAG > 100.
-PRINT "Pitchback, throttling for Max Q".
 DECLARE LOCAL maxQPid is PIDLOOP(10, 3, 3, 0, 1).
 SET maxQPid:SETPOINT to 0.25.
 DECLARE LOCAL lastPressure IS SHIP:Q.
 
-// Would be nice to low-pass this, but assume we aren't buffeted by wind in Kerbal.
-UNTIL (SHIP:VELOCITY:SURFACE:MAG > 300 AND SHIP:Q < lastPressure) {
-    tick().
-    SET throttleOut to maxQPid:UPDATE(TIME:SECONDS, SHIP:Q).
-    SET lastPressure to SHIP:Q.
-    setPitch(pitchAboveHorizon()).
-}
-
-PRINT "Throttling to hold " + desiredEta() + "s to apogee".
-DECLARE LOCAL apogeePid is PIDLOOP(1, 0, 0.05, 0.05, 1).
+DECLARE LOCAL apogeePid is PIDLOOP(1, 0, 0, 0.01, 1).
 SET apogeePid:SETPOINT TO desiredEta().
-DECLARE LOCAL lastEta IS 0.
-UNTIL SHIP:ORBIT:APOAPSIS >= desiredAp OR
-      // When to give up and start pitching, see below. (Give a few seconds for staging.)
-      (SHIP:ORBIT:ETA:APOAPSIS < lastEta AND SHIP:ORBIT:ETA:APOAPSIS < apogeePid:SETPOINT - 5) {
+
+UNTIL SHIP:ORBIT:APOAPSIS >= desiredAp {
+    SET currentStatus TO "Throttle & Pitch for " + ROUND(desiredEta(), 1) + "s to apogee".
     tick().
-    SET lastEta to SHIP:ORBIT:ETA:APOAPSIS.
+    SET lastPressure to SHIP:Q.
     SET apogeePid:SETPOINT TO desiredEta().
     SET throttleOut TO MIN(
         maxQPid:UPDATE(TIME:SECONDS, SHIP:Q),
         apogeePid:UPDATE(TIME:SECONDS, SHIP:ORBIT:ETA:APOAPSIS)
     ).
-    setPitch(pitchAboveHorizon()).
+    DECLARE LOCAL pitchUpdate IS CLAMP(-30, 30, apogeePid:SETPOINT - SHIP:ORBIT:ETA:APOAPSIS).
+    setPitch(pitchAboveHorizon() + pitchUpdate).
 }
 
-IF SHIP:ORBIT:ETA:APOAPSIS < lastEta AND SHIP:ORBIT:ETA:APOAPSIS < apogeePid:SETPOINT - 5 {
-    PRINT "Insufficient initial burn, pitching for apogee".
-    // Pitch up to 30 segerees above the horizon.
-    // The LOCK "cooked" steering is already a PID loop, don't drive it with one.
-    UNTIL SHIP:ORBIT:APOAPSIS >= desiredAp {
-        tick().
-        SET apogeePid:SETPOINT TO desiredEta().
-        SET throttleOut TO apogeePid:UPDATE(TIME:SECONDS, SHIP:ORBIT:ETA:APOAPSIS).
-        DECLARE LOCAL pitchUpdate IS CLAMP(0, 30, apogeePid:SETPOINT - SHIP:ORBIT:ETA:APOAPSIS).
-        setPitch(pitchAboveHorizon() + pitchUpdate).
-    }
-}
-
-IF SHIP:ORBIT:ETA:APOAPSIS < 120 {
-    PRINT "Circularizing orbit".
-    UNTIL SHIP:ORBIT:PERIAPSIS >= desiredAp {
-        tick().
-        SET apogeePid:SETPOINT TO desiredEta().
-        SET throttleOut TO apogeePid:UPDATE(TIME:SECONDS, SHIP:ORBIT:ETA:APOAPSIS).
-        DECLARE LOCAL pitchUpdate IS CLAMP(-20, 20, (SHIP:ORBIT:ETA:APOAPSIS - desiredAp) / 10000).
-        setPitch(pitchAboveHorizon() + pitchUpdate).
-    }
-}
-
-PRINT "Orbital insertion complete.".
-LOCK THROTTLE to 0.
+SET currentStatus TO "Orbital insertion complete.".
 
 FUNCTION CLAMP {
     PARAMETER lo.
@@ -101,12 +95,12 @@ FUNCTION CLAMP {
 FUNCTION desiredEta {
     // Larger number is a steeper ascent.
     DECLARE LOCAL starting IS 45.
-    RETURN starting * CLAMP(0, 1, SQRT((desiredAp - SHIP:ORBIT:APOAPSIS) / 10000)).
+    RETURN starting * CLAMP(0, 1, (desiredAp - SHIP:ALTITUDE) / 20000).
 }
 
 FUNCTION setPitch {
     PARAMETER p.
-    SET pitchOut TO CLAMP(95, 210, 180 - p).
+    SET pitchOut TO CLAMP(100, 175, 180 - p).
 }
 
 // From https://github.com/KSP-KOS/KSLib/blob/master/library/lib_navball.ks
@@ -128,7 +122,6 @@ FUNCTION staging {
         }
     }
     IF shouldStage {
-        PRINT "Staging".
         DECLARE LOCAL lastThrottle IS throttleOut.
         SET throttleOut TO 0.
         STAGE.
