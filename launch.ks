@@ -31,6 +31,7 @@ DECLARE LOCAL staritngDV IS SHIP:DELTAV:VACUUM.
 DECLARE LOCAL expendedDeltaV IS 0.
 DECLARE LOCAL gravityLosses IS 0.
 DECLARE LOCAL steeringLosses IS 0.
+DECLARE LOCAL dragLosses IS 0.
 
 DECLARE LOCAL lastTick IS 0.
 WHEN TIME:SECONDS <> lastTick THEN {
@@ -49,6 +50,8 @@ WHEN TIME:SECONDS <> lastTick THEN {
     SET expendedDeltaV TO expendedDeltaV + dv.
     SET gravityLosses TO gravityLosses + VDOT(vHat, g) * dt.
     SET steeringLosses TO steeringLosses + dv * (1 - VDOT(vHat, dir:NORMALIZED)).
+    SET dragLosses TO dragLosses -
+        VDOT(SHIP:VELOCITY:SURFACE:NORMALIZED, ADDONS:FAR:AEROFORCE) / SHIP:MASS * dt.
 
     SET lastTick TO TIME:SECONDS.
     RETURN TRUE.
@@ -75,13 +78,18 @@ WHEN TIME:SECONDS - lastScreenUpdate > 1 THEN {
 
     PRINT "DV SPENT:   " + ROUND(expendedDeltaV, 1) AT (0, 10).
     PRINT "G LOSS:     " + ROUND(gravityLosses, 1) AT (0, 11).
-    DECLARE LOCAL dV IS SHIP:VELOCITY:ORBIT:MAG - initialOrbitalVelocity.
-    PRINT "DRAG LOSS:  " + ROUND(expendedDeltaV - dv - gravityLosses - steeringLosses, 1) AT (0, 12).
+    PRINT "DRAG LOSS:  " + ROUND(dragLosses, 1) AT (0, 12).
     PRINT "STEER LOSS: " + ROUND(steeringLosses, 1) AT (0, 13).
 
     DECLARE LOCAL gMag IS CONSTANT:G * BODY:MASS / (BODY:RADIUS + SHIP:ALTITUDE) ^ 2.
     PRINT "G: " + ROUND(gMag, 2) AT (0, 15).
-    PRINT "Q: " + ROUND(SHIP:Q, 2) AT (0, 16).
+    PRINT "Q: " + ROUND(ADDONS:FAR:DYNPRES, 2) AT (0, 16).
+    PRINT "MACH: " + ROUND(ADDONS:FAR:MACH, 2) AT (0, 17).
+    PRINT "Drag: " +
+        ROUND(-VDOT(SHIP:VELOCITY:SURFACE:NORMALIZED, ADDONS:FAR:AEROFORCE) / SHIP:MASS, 2) +
+        " m/s^2" AT (0, 18).
+    PRINT "AOA: " + ROUND(ABS(ADDONS:FAR:AOA), 2) AT (0, 19).
+    PRINT "AOS: " + ROUND(ABS(ADDONS:FAR:AOS), 2) AT (0, 20).
     SET lastScreenUpdate TO TIME:SECONDS.
     PRESERVE.
 }
@@ -98,9 +106,8 @@ SET currentStatus TO "Roll program".
 SET headingOut TO MOD(downrange + 180, 360).
 
 WAIT UNTIL SHIP:VELOCITY:SURFACE:MAG > 100.
-DECLARE LOCAL maxQPid is PIDLOOP(10, 3, 3, 0, 1).
-SET maxQPid:SETPOINT to 0.4.
-DECLARE LOCAL lastPressure IS SHIP:Q.
+DECLARE LOCAL maxQPid is PIDLOOP(0.1, 0.03, 0.03, 0, 1).
+SET maxQPid:SETPOINT to 40.
 
 DECLARE LOCAL apogeePid is PIDLOOP(1, 0, 0, 0.01, 1).
 SET apogeePid:SETPOINT TO desiredEta().
@@ -108,10 +115,9 @@ SET apogeePid:SETPOINT TO desiredEta().
 UNTIL SHIP:ORBIT:APOAPSIS >= desiredAp {
     SET currentStatus TO "Throttle & Pitch for " + ROUND(desiredEta(), 1) + "s to apogee".
     tick().
-    SET lastPressure to SHIP:Q.
     SET apogeePid:SETPOINT TO desiredEta().
     SET throttleOut TO MIN(
-        maxQPid:UPDATE(TIME:SECONDS, SHIP:Q),
+        maxQPid:UPDATE(TIME:SECONDS, ADDONS:FAR:DYNPRES),
         apogeePid:UPDATE(TIME:SECONDS, SHIP:ORBIT:ETA:APOAPSIS)
     ).
     DECLARE LOCAL pitchUpdate IS CLAMP(-30, 30, apogeePid:SETPOINT - SHIP:ORBIT:ETA:APOAPSIS).
