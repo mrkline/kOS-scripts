@@ -24,6 +24,10 @@ WAIT UNTIL nd:ETA <= (burn_duration / 2).
 DECLARE LOCAL done IS False.
 DECLARE LOCAL dv0 IS nd:DELTAV.
 UNTIL done {
+    UNTIL SHIP:MAXTHRUST > 0 {
+        STAGE.
+        WAIT 1.
+    }
     // Recalculate current max_acceleration, as it changes while we burn through fuel
     SET max_acc TO SHIP:MAXTHRUST / SHIP:MASS.
     // Point back along our burn vector
@@ -32,7 +36,7 @@ UNTIL done {
     // We're done once our initial pointing direction and our current one diverge.
     IF VDOT(dv0, np) < 0.5 {
         LOCK THROTTLE TO 0.
-        break.
+        BREAK.
     }
 
     // Throttle is 100% until there is less than a second of burn left.
