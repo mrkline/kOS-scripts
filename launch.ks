@@ -17,15 +17,12 @@ DECLARE LOCAL orbitalVelocity IS CREATEORBIT(0, 0, BODY:RADIUS + desiredAp, 0, 0
 
 WAIT UNTIL SHIP:UNPACKED.
 
-DECLARE LOCAL currentStatus IS "".
-DECLARE LOCAL lastScreenUpdate IS 0.
 DECLARE LOCAL pitchOut IS 90.
 LOCK STEERING to HEADING(headingOut, pitchOut).
 DECLARE LOCAL throttleOut IS 0.
 LOCK THROTTLE TO throttleOut.
 
 DECLARE LOCAL startTime IS TIME:SECONDS + 5.
-DECLARE LOCAL staritngDV IS SHIP:DELTAV:VACUUM.
 
 // Questionable per-tick integration
 DECLARE LOCAL expendedDeltaV IS 0.
@@ -33,14 +30,17 @@ DECLARE LOCAL gravityLosses IS 0.
 DECLARE LOCAL steeringLosses IS 0.
 DECLARE LOCAL dragLosses IS 0.
 
+DELETEPATH("launch.csv").
+LOG "t,altitude,accelTheta,dx,dy,ddx,ddy" TO "launch.csv".
 DECLARE LOCAL lastTick IS 0.
-WHEN TIME:SECONDS <> lastTick THEN {
+WHEN TIME:SECONDS >= startTime AND TIME:SECONDS <> lastTick THEN {
     IF lastTick = 0 {
         SET lastTick TO TIME:SECONDS.
         RETURN TRUE.
     }
     DECLARE LOCAL dt IS TIME:SECONDS - lastTick.
-    DECLARE LOCAL dv IS SHIP:THRUST / SHIP:MASS * dt.
+    DECLARE LOCAL ddv IS SHIP:THRUST / SHIP:MASS.
+    DECLARE LOCAL dv IS ddv * dt.
     DECLARE LOCAL gMag IS CONSTANT:G * BODY:MASS / (BODY:RADIUS + SHIP:ALTITUDE) ^ 2.
     DECLARE LOCAL g IS -BODY:POSITION:NORMALIZED * gMag.
     DECLARE LOCAL vel IS SHIP:VELOCITY:ORBIT.
@@ -53,11 +53,19 @@ WHEN TIME:SECONDS <> lastTick THEN {
     SET dragLosses TO dragLosses -
         VDOT(SHIP:VELOCITY:SURFACE:NORMALIZED, ADDONS:FAR:AEROFORCE) / SHIP:MASS * dt.
 
+    DECLARE LOCAL velAng IS vang(SHIP:VELOCITY:ORBIT, BODY:POSITION) - 90.
+    DECLARE LOCAL accAng IS vang(dir, BODY:POSITION) - 90.
+    DECLARE LOCAL vmag IS vel:MAG.
+    LOG (TIME:SECONDS - startTime) + "," + SHIP:ALTITUDE + "," + accAng + "," +
+        (COS(velAng) * vmag) + "," + (SIN(velAng) * vmag) + "," +
+        (COS(accAng) * ddv) + "," + (SIN(accAng) * ddv) TO "launch.csv".
     SET lastTick TO TIME:SECONDS.
     RETURN TRUE.
 }
 
 // TUI render loop
+DECLARE LOCAL currentStatus IS "".
+DECLARE LOCAL lastScreenUpdate IS 0.
 WHEN TIME:SECONDS - lastScreenUpdate > 1 THEN {
     CLEARSCREEN.
     PRINT currentStatus AT(0, 0).
@@ -136,13 +144,13 @@ FUNCTION CLAMP {
 
 FUNCTION desiredEta {
     // Larger number is a steeper ascent.
-    DECLARE LOCAL starting IS 60.
+    DECLARE LOCAL starting IS 45.
     RETURN starting * CLAMP(0.5, 1, (desiredAp - SHIP:ALTITUDE) / 10000).
 }
 
 FUNCTION setPitch {
     PARAMETER p.
-    SET pitchOut TO CLAMP(110, 190, 180 - p).
+    SET pitchOut TO CLAMP(100, 180, 180 - p).
 }
 
 // From https://github.com/KSP-KOS/KSLib/blob/master/library/lib_navball.ks
