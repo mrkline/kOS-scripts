@@ -77,7 +77,7 @@ WHEN TIME:SECONDS - lastScreenUpdate > 1 THEN {
     }
 
     PRINT "HEADING: " + ROUND(MOD(headingOut + 180, 360)) AT (0, 4).
-    PRINT "PITCH: " + ROUND(180 - pitchOut, 2) + " (" + ROUND(pitchTrim(), 2) + " from horizon)" AT (0, 5).
+    PRINT "PITCH: " + ROUND(180 - pitchOut, 2) AT (0, 5).
     PRINT "VEL/ORB: " + ROUND(SHIP:VELOCITY:ORBIT:MAG) + "/" + ROUND(orbitalVelocity)
         + " (" + ROUND(SHIP:VELOCITY:ORBIT:MAG / orbitalVelocity * 100) + "%)" AT (0, 6).
     PRINT "AP: " + ROUND(SHIP:ORBIT:APOAPSIS)
@@ -117,24 +117,24 @@ WAIT UNTIL SHIP:VELOCITY:SURFACE:MAG > 100.
 DECLARE LOCAL maxQPid is PIDLOOP(0.1, 0.03, 0.03, 0, 1).
 SET maxQPid:SETPOINT to 40.
 
-DECLARE LOCAL apogeePid is PIDLOOP(1, 0, 0, 0.01, 1).
+DECLARE LOCAL apogeePid is PIDLOOP(1, 0, 0, 0, 1).
 SET apogeePid:SETPOINT TO desiredEta().
 
 UNTIL SHIP:ORBIT:APOAPSIS >= desiredAp {
-    SET currentStatus TO "Throttle & Pitch for " + ROUND(desiredEta(), 1) + "s to apogee".
+    SET currentStatus TO "Throttle for " + ROUND(desiredEta(), 1) + "s to apogee".
     tick().
     SET apogeePid:SETPOINT TO desiredEta().
-    SET throttleOut TO MIN(
-        maxQPid:UPDATE(TIME:SECONDS, ADDONS:FAR:DYNPRES),
-        apogeePid:UPDATE(TIME:SECONDS, SHIP:ORBIT:ETA:APOAPSIS)
-    ).
-    setPitch(pitchAboveHorizon() + pitchTrim()).
-}
-
-UNTIL SHIP:VELOCITY:ORBIT > orbitalVelocity {
-    tick().
-    SET throttleOut TO 1.
-    setPitch(pitchAboveHorizon() + pitchTrim()).
+    IF pitchAboveHorizon() > 0 {
+        SET throttleOut TO MIN(
+            maxQPid:UPDATE(TIME:SECONDS, ADDONS:FAR:DYNPRES),
+            apogeePid:UPDATE(TIME:SECONDS, SHIP:ORBIT:ETA:APOAPSIS)
+        ).
+        setPitch(pitchAboveHorizon()).
+    } ELSE {
+        // Assume we're over the hump, circularize ASAP.
+        SET throttleOut TO 1.
+        set pitchOut TO 170.
+    }
 }
 
 SET throttleOut TO 0.
@@ -147,20 +147,15 @@ FUNCTION CLAMP {
     RETURN MAX(lo, MIN(hi, val)).
 }
 
-FUNCTION pitchTrim {
-    RETURN CLAMP(-1, 1, (desiredAp - SHIP:ORBIT:APOAPSIS) / 20000) * 10.
-}
-
 FUNCTION desiredEta {
-    // Larger number is a steeper ascent.
-    DECLARE LOCAL starting IS 45.
-    RETURN starting.
-    //RETURN starting * CLAMP(0.5, 1, (desiredAp - SHIP:ALTITUDE) / 10000).
+    // Rapidly shallow out our ETA as we approach the target apoapsis.
+    DECLARE LOCAL starting IS 120.
+    RETURN starting * CLAMP(0.5, 1, (desiredAp - SHIP:ORBIT:APOAPSIS) / 20000).
 }
 
 FUNCTION setPitch {
     PARAMETER p.
-    SET pitchOut TO CLAMP(110, 180, 180 - p).
+    SET pitchOut TO CLAMP(100, 180, 180 - p).
 }
 
 // From https://github.com/KSP-KOS/KSLib/blob/master/library/lib_navball.ks
