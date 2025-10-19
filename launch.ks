@@ -11,14 +11,12 @@ PARAMETER downrange IS 90.
 PARAMETER desiredApKilo IS 80.
 
 DECLARE LOCAL desiredAp IS desiredApKilo * 1000.
-DECLARE LOCAL headingOut IS 0.
 DECLARE LOCAL initialOrbitalVelocity IS VELOCITY:ORBIT:MAG. 
 DECLARE LOCAL orbitalVelocity IS CREATEORBIT(0, 0, BODY:RADIUS + desiredAp, 0, 0, 0, 0, BODY):VELOCITY:ORBIT:MAG.
 
 WAIT UNTIL SHIP:UNPACKED.
 
-DECLARE LOCAL pitchOut IS 90.
-LOCK STEERING to HEADING(headingOut, pitchOut).
+LOCK STEERING to HEADING(0, 90).
 DECLARE LOCAL throttleOut IS 0.
 LOCK THROTTLE TO throttleOut.
 
@@ -63,41 +61,48 @@ WHEN TIME:SECONDS >= startTime AND TIME:SECONDS <> lastTick THEN {
     RETURN TRUE.
 }
 
+// Until I can be bothered to wire up the analytical solution,
+// drive the heading towards the right inclination.
+DECLARE LOCAL headingPid IS PIDLOOP(2, 0, 0.05, -160, 160).
+
 // TUI render loop
 DECLARE LOCAL currentStatus IS "".
 DECLARE LOCAL lastScreenUpdate IS 0.
-WHEN TIME:SECONDS - lastScreenUpdate > 1 THEN {
+WHEN TIME:SECONDS - lastScreenUpdate > 0.5 THEN {
     CLEARSCREEN.
     PRINT currentStatus AT(0, 0).
     PRINT "Heading " + downrange + ", apoapsis " + desiredAp AT (0, 1).
     IF TIME:SECONDS - startTime > 0 {
         PRINT "T+" + FLOOR(TIME:SECONDS - startTime) AT (0, 2).
     } ELSE {
-        PRINT "T" + FLOOR(TIME:SECONDS - startTime) AT (0, 3).
+        PRINT "T" + FLOOR(TIME:SECONDS - startTime) AT (0, 2).
     }
 
-    PRINT "HEADING: " + ROUND(MOD(headingOut + 180, 360)) AT (0, 4).
-    PRINT "PITCH: " + ROUND(180 - pitchOut, 2) AT (0, 5).
+    PRINT "ORBIT HEADING: " + ROUND(orbitalHeading(), 1) +
+        " (" + ROUND(turnTo(orbitalHeading(), downrange), 1) + " error)" AT (0, 4).
+    PRINT "ORBIT PITCH:   " + ROUND(orbitalPitch(), 1) AT (0, 5). 
+    PRINT "AIR HEADING: " + ROUND(airHeading()) AT (0, 6).
+    PRINT "AIR PITCH:   " + ROUND(airPitch(), 1) AT (0, 7).
     PRINT "VEL/ORB: " + ROUND(SHIP:VELOCITY:ORBIT:MAG) + "/" + ROUND(orbitalVelocity)
-        + " (" + ROUND(SHIP:VELOCITY:ORBIT:MAG / orbitalVelocity * 100) + "%)" AT (0, 6).
+        + " (" + ROUND(SHIP:VELOCITY:ORBIT:MAG / orbitalVelocity * 100) + "%)" AT (0, 8).
     PRINT "AP: " + ROUND(SHIP:ORBIT:APOAPSIS)
-        + " (" + ROUND(SHIP:ORBIT:APOAPSIS / desiredAp * 100)  + "%)" AT (0, 7).
-    PRINT "PE: " + MAX(0, ROUND(SHIP:ORBIT:PERIAPSIS)) AT (0, 8).
+        + " (" + ROUND(SHIP:ORBIT:APOAPSIS / desiredAp * 100)  + "%)" AT (0, 9).
+    PRINT "PE: " + MAX(0, ROUND(SHIP:ORBIT:PERIAPSIS)) AT (0, 10).
 
-    PRINT "DV SPENT:   " + ROUND(expendedDeltaV, 1) AT (0, 10).
-    PRINT "G LOSS:     " + ROUND(gravityLosses, 1) AT (0, 11).
-    PRINT "DRAG LOSS:  " + ROUND(dragLosses, 1) AT (0, 12).
-    PRINT "STEER LOSS: " + ROUND(steeringLosses, 1) AT (0, 13).
+    PRINT "DV SPENT:   " + ROUND(expendedDeltaV, 1) AT (0, 12).
+    PRINT "G LOSS:     " + ROUND(gravityLosses, 1) AT (0, 13).
+    PRINT "DRAG LOSS:  " + ROUND(dragLosses, 1) AT (0, 14).
+    PRINT "STEER LOSS: " + ROUND(steeringLosses, 1) AT (0, 15).
 
     DECLARE LOCAL gMag IS CONSTANT:G * BODY:MASS / (BODY:RADIUS + SHIP:ALTITUDE) ^ 2.
-    PRINT "G: " + ROUND(gMag, 2) AT (0, 15).
-    PRINT "Q: " + ROUND(ADDONS:FAR:DYNPRES, 2) AT (0, 16).
-    PRINT "MACH: " + ROUND(ADDONS:FAR:MACH, 2) AT (0, 17).
+    PRINT "G: " + ROUND(gMag, 2) AT (0, 17).
+    PRINT "Q: " + ROUND(ADDONS:FAR:DYNPRES, 2) AT (0, 18).
+    PRINT "MACH: " + ROUND(ADDONS:FAR:MACH, 2) AT (0, 19).
     PRINT "Drag: " +
         ROUND(-VDOT(SHIP:VELOCITY:SURFACE:NORMALIZED, ADDONS:FAR:AEROFORCE) / SHIP:MASS, 2) +
-        " m/s^2" AT (0, 18).
-    PRINT "AOA: " + ROUND(ABS(ADDONS:FAR:AOA), 2) AT (0, 19).
-    PRINT "AOS: " + ROUND(ABS(ADDONS:FAR:AOS), 2) AT (0, 20).
+        " m/s^2" AT (0, 20).
+    PRINT "AOA: " + ROUND(ABS(ADDONS:FAR:AOA), 2) AT (0, 21).
+    PRINT "AOS: " + ROUND(ABS(ADDONS:FAR:AOS), 2) AT (0, 22).
     SET lastScreenUpdate TO TIME:SECONDS.
     PRESERVE.
 }
@@ -108,33 +113,33 @@ SET currentStatus TO "Ignition".
 SET throttleOut TO 1.
 STAGE.
 
-DECLARE LOCAL tower IS SHIP:BOUNDS:SIZE:Z * 2.5.
-WAIT UNTIL ALT:RADAR > tower.
-SET currentStatus TO "Roll program".
-SET headingOut TO MOD(downrange + 180, 360).
-
 WAIT UNTIL SHIP:VELOCITY:SURFACE:MAG > 100.
-DECLARE LOCAL maxQPid is PIDLOOP(0.1, 0.03, 0.03, 0, 1).
-SET maxQPid:SETPOINT to 40.
 
+// As soon as we get a little bit of speed, pitch over.
+DECLARE LOCAL aimVector IS SHIP:UP.
+LOCK STEERING TO aimVector. // Rotated in tick().
+
+// Don't let dynamic pressure exceed 30 kPa, drag accumulates rapidly.
+DECLARE LOCAL maxQPid is PIDLOOP(0.1, 0.03, 0.03, 0, 1).
+SET maxQPid:SETPOINT to 30.
+
+// Drive the throttle based on the desired ETA to apoapsis,
 DECLARE LOCAL apogeePid is PIDLOOP(1, 0, 0, 0, 1).
 SET apogeePid:SETPOINT TO desiredEta().
 
-UNTIL SHIP:ORBIT:APOAPSIS >= desiredAp {
+UNTIL SHIP:ORBIT:APOAPSIS >= desiredAp OR throttleOut = 0 {
     SET currentStatus TO "Throttle for " + ROUND(desiredEta(), 1) + "s to apogee".
-    tick().
     SET apogeePid:SETPOINT TO desiredEta().
-    IF pitchAboveHorizon() > 0 {
+    IF airPitch() > 0 {
         SET throttleOut TO MIN(
             maxQPid:UPDATE(TIME:SECONDS, ADDONS:FAR:DYNPRES),
             apogeePid:UPDATE(TIME:SECONDS, SHIP:ORBIT:ETA:APOAPSIS)
         ).
-        setPitch(pitchAboveHorizon()).
     } ELSE {
         // Assume we're over the hump, circularize ASAP.
         SET throttleOut TO 1.
-        set pitchOut TO 170.
     }
+    tick().
 }
 
 SET throttleOut TO 0.
@@ -152,14 +157,76 @@ FUNCTION desiredEta {
     RETURN 30 + 20 * (1 - SHIP:VELOCITY:ORBIT:MAG / orbitalVelocity).
 }
 
-FUNCTION setPitch {
-    PARAMETER p.
-    SET pitchOut TO CLAMP(95, 175, 180 - p).
+// From https://github.com/KSP-KOS/KSLib/blob/master/library/lib_navball.ks
+FUNCTION pitchOf {
+    PARAMETER hdg.
+    RETURN VANG(hdg, BODY:POSITION) - 90.
 }
 
-// From https://github.com/KSP-KOS/KSLib/blob/master/library/lib_navball.ks
-FUNCTION pitchAboveHorizon {
-    RETURN vang(SHIP:VELOCITY:SURFACE, BODY:POSITION) - 90.
+FUNCTION airPitch {
+    RETURN pitchOf(SHIP:VELOCITY:SURFACE).
+}
+
+FUNCTION orbitalPitch {
+    RETURN pitchOf(SHIP:VELOCITY:ORBIT).
+}
+
+// ditto
+FUNCTION headingOf {
+    PARAMETER hdg.
+    DECLARE LOCAL east IS VCRS(SHIP:UP:VECTOR, SHIP:NORTH:VECTOR).
+    DECLARE LOCAL tx IS VDOT(SHIP:NORTH:VECTOR, hdg).
+    DECLARE LOCAL ty IS VDOT(east, hdg).
+    DECLARE LOCAL ta IS ARCTAN2(ty, tx).
+    IF ta < 0 {
+        SET ta TO ta + 360.
+    }
+    RETURN ta.
+}
+
+FUNCTION airHeading {
+    RETURN headingOf(SHIP:VELOCITY:SURFACE).
+}
+
+FUNCTION orbitalHeading {
+    RETURN headingOf(SHIP:VELOCITY:ORBIT).
+}
+
+FUNCTION MODCIRCLE {
+    PARAMETER ang.
+    UNTIL ang >= 0 {
+        SET ang to ANG + 360.
+    }
+    UNTIL ang < 360 {
+        SET ang to ANG - 360.
+    }
+    RETURN ang.
+}
+
+FUNCTION turnTo {
+    PARAMETER angFrom.
+    PARAMETER angTo.
+    DECLARE LOCAL turn IS angFrom - angTo.
+    IF angFrom > 180 {
+        SET turn TO turn - 360.
+    }  ELSE IF angFrom < -180 {
+        SET turn TO turn + 360.
+    }
+    RETURN turn.
+}
+
+FUNCTION blendHeading {
+    // We our orbit to be going downrange towards our target compass heading,
+    // pitching along our ballistic arc.
+    // Buf it that heading's not 90 degrees, we have to rotate it after launch.
+    // Trying to rotate the heading while keeping pitch constant is SKETCHY -
+    // it creates constant yawing moments and sideslip that can make the ship depart.
+    // Do so very carefully.
+    DECLARE local desiredHeading IS HEADING(
+        MODCIRCLE(orbitalHeading() - 2 * turnTo(orbitalHeading(), downrange)),
+        CLAMP(5, 85, airPitch())
+    ):FOREVECTOR.
+    SET aimVector TO LOOKDIRUP(desiredHeading, BODY:POSITION).
 }
 
 FUNCTION staging {    
@@ -186,4 +253,5 @@ FUNCTION staging {
 
 FUNCTION tick {
     staging().
+    blendHeading().
 }
