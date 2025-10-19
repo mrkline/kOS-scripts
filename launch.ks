@@ -149,13 +149,12 @@ FUNCTION CLAMP {
 
 FUNCTION desiredEta {
     // Rapidly shallow out our ETA as we approach the target apoapsis.
-    DECLARE LOCAL starting IS 120.
-    RETURN starting * CLAMP(0.5, 1, (desiredAp - SHIP:ORBIT:APOAPSIS) / 20000).
+    RETURN 30 + 20 * (1 - SHIP:VELOCITY:ORBIT:MAG / orbitalVelocity).
 }
 
 FUNCTION setPitch {
     PARAMETER p.
-    SET pitchOut TO CLAMP(100, 180, 180 - p).
+    SET pitchOut TO CLAMP(95, 175, 180 - p).
 }
 
 // From https://github.com/KSP-KOS/KSLib/blob/master/library/lib_navball.ks
