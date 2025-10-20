@@ -154,7 +154,7 @@ FUNCTION CLAMP {
 
 FUNCTION desiredEta {
     // Rapidly shallow out our ETA as we approach the target apoapsis.
-    RETURN 30 + 20 * (1 - SHIP:VELOCITY:ORBIT:MAG / orbitalVelocity).
+    RETURN 35 + 15 * (1 - SHIP:VELOCITY:ORBIT:MAG / orbitalVelocity).
 }
 
 // From https://github.com/KSP-KOS/KSLib/blob/master/library/lib_navball.ks
