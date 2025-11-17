@@ -2,8 +2,8 @@
 @CLOBBERBUILTINS OFF.
 
 // Vain attempt to damp oscillations on long ships:
-SET STEERINGMANAGER:PITCHTS TO 8.
-SET STEERINGMANAGER:YAWTS TO 8.
+SET STEERINGMANAGER:PITCHTS TO 10.
+SET STEERINGMANAGER:YAWTS TO 10.
 SET STEERINGMANAGER:PITCHPID:KD TO 0.1.
 SET STEERINGMANAGER:YAWPID:KD TO 0.1.
 
@@ -28,8 +28,8 @@ DECLARE LOCAL gravityLosses IS 0.
 DECLARE LOCAL steeringLosses IS 0.
 DECLARE LOCAL dragLosses IS 0.
 
-DELETEPATH("launch.csv").
-LOG "t,altitude,accelTheta,dx,dy,ddx,ddy" TO "launch.csv".
+//DELETEPATH("launch.csv").
+//LOG "t,altitude,accelTheta,dx,dy,ddx,ddy" TO "launch.csv".
 DECLARE LOCAL lastTick IS 0.
 WHEN TIME:SECONDS >= startTime AND TIME:SECONDS <> lastTick THEN {
     IF lastTick = 0 {
@@ -54,9 +54,9 @@ WHEN TIME:SECONDS >= startTime AND TIME:SECONDS <> lastTick THEN {
     DECLARE LOCAL velAng IS vang(SHIP:VELOCITY:ORBIT, BODY:POSITION) - 90.
     DECLARE LOCAL accAng IS vang(dir, BODY:POSITION) - 90.
     DECLARE LOCAL vmag IS vel:MAG.
-    LOG (TIME:SECONDS - startTime) + "," + SHIP:ALTITUDE + "," + accAng + "," +
-        (COS(velAng) * vmag) + "," + (SIN(velAng) * vmag) + "," +
-        (COS(accAng) * ddv) + "," + (SIN(accAng) * ddv) TO "launch.csv".
+    //LOG (TIME:SECONDS - startTime) + "," + SHIP:ALTITUDE + "," + accAng + "," +
+    //    (COS(velAng) * vmag) + "," + (SIN(velAng) * vmag) + "," +
+    //    (COS(accAng) * ddv) + "," + (SIN(accAng) * ddv) TO "launch.csv".
     SET lastTick TO TIME:SECONDS.
     RETURN TRUE.
 }
@@ -113,6 +113,11 @@ SET currentStatus TO "Ignition".
 SET throttleOut TO 1.
 STAGE.
 
+DECLARE LOCAL tower IS SHIP:BOUNDS:SIZE:Z * 2.5.
+WAIT UNTIL ALT:RADAR > tower.
+SET currentStatus TO "Roll program".
+LOCK STEERING to HEADING(MOD(downrange + 180, 360), 90).
+
 WAIT UNTIL SHIP:VELOCITY:SURFACE:MAG > 100.
 
 // As soon as we get a little bit of speed, pitch over.
@@ -120,14 +125,14 @@ DECLARE LOCAL aimVector IS SHIP:UP.
 LOCK STEERING TO aimVector. // Rotated in tick().
 
 // Don't let dynamic pressure exceed 30 kPa, drag accumulates rapidly.
-DECLARE LOCAL maxQPid is PIDLOOP(0.1, 0.03, 0.03, 0, 1).
+DECLARE LOCAL maxQPid is PIDLOOP(0.1, 0, 0.03, 0, 1).
 SET maxQPid:SETPOINT to 30.
 
 // Drive the throttle based on the desired ETA to apoapsis,
-DECLARE LOCAL apogeePid is PIDLOOP(1, 0, 0, 0, 1).
+DECLARE LOCAL apogeePid is PIDLOOP(1, 0, 0.03, 0, 1).
 SET apogeePid:SETPOINT TO desiredEta().
 
-UNTIL SHIP:ORBIT:APOAPSIS >= desiredAp OR throttleOut = 0 {
+UNTIL SHIP:ORBIT:APOAPSIS >= desiredAp OR (SHIP:ALTITUDE >= 70000 AND throttleOut = 0) {
     SET currentStatus TO "Throttle for " + ROUND(desiredEta(), 1) + "s to apogee".
     SET apogeePid:SETPOINT TO desiredEta().
     IF airPitch() > 0 {
@@ -142,8 +147,12 @@ UNTIL SHIP:ORBIT:APOAPSIS >= desiredAp OR throttleOut = 0 {
     tick().
 }
 
-SET throttleOut TO 0.
-SET currentStatus TO "Orbital insertion complete.".
+UNLOCK STEERING.
+UNLOCK THROTTLE.
+SET SHIP:CONTROL:PILOTMAINTHROTTLE TO 0.
+SAS ON.
+PRINT "Orbital insertion complete." AT (0, 0).
+WAIT 0.
 
 FUNCTION CLAMP {
     PARAMETER lo.
@@ -154,7 +163,15 @@ FUNCTION CLAMP {
 
 FUNCTION desiredEta {
     // Rapidly shallow out our ETA as we approach the target apoapsis.
-    RETURN 35 + 15 * (1 - SHIP:VELOCITY:ORBIT:MAG / orbitalVelocity).
+    DECLARE LOCAL des IS 30 + 15 * (1 - SHIP:VELOCITY:ORBIT:MAG / orbitalVelocity).
+    // Pad for SRBs so we don't have a bunch of idle time when they burn out.
+    FOR e IN SHIP:ENGINES {
+        IF e:IGNITION AND e:THROTTLELOCK {
+            SET des TO des - 15.
+            BREAK.
+        }
+    }
+    RETURN des.
 }
 
 // From https://github.com/KSP-KOS/KSLib/blob/master/library/lib_navball.ks
@@ -224,9 +241,13 @@ FUNCTION blendHeading {
     // Do so very carefully.
     DECLARE local desiredHeading IS HEADING(
         MODCIRCLE(orbitalHeading() - 2 * turnTo(orbitalHeading(), downrange)),
-        CLAMP(5, 85, airPitch())
+        CLAMP(5, 85, airPitch() + pitchTrim())
     ):FOREVECTOR.
     SET aimVector TO LOOKDIRUP(desiredHeading, BODY:POSITION).
+}
+
+FUNCTION pitchTrim {
+    RETURN CLAMP(0, 10, (desiredEta() - SHIP:ORBIT:ETA:APOAPSIS)).
 }
 
 FUNCTION staging {    
@@ -246,7 +267,6 @@ FUNCTION staging {
         DECLARE LOCAL lastThrottle IS throttleOut.
         SET throttleOut TO 0.
         STAGE.
-        WAIT 1.
         SET throttleOut TO lastThrottle.
     }
 }

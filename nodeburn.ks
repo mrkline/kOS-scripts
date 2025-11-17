@@ -1,6 +1,10 @@
 @LAZYGLOBAL OFF.
 @CLOBBERBUILTINS OFF.
 
+SET SHIP:CONTROL:PILOTMAINTHROTTLE TO 0.
+SAS OFF.
+WAIT 0.
+
 // Taken straight from the example, but it's a start.
 DECLARE LOCAL nd IS NEXTNODE.
 
@@ -14,7 +18,7 @@ DECLARE LOCAL max_acc IS SHIP:MAXTHRUST / SHIP:MASS.
 // A decent approximation for now.
 DECLARE LOCAL burn_duration IS nd:DELTAV:MAG / max_acc.
 WAIT UNTIL nd:ETA <= (burn_duration / 2 + 60).
-DECLARE LOCAL np IS nd:DELTAV. //points to node, don't care about the roll direction.
+DECLARE LOCAL np IS LOOKDIRUP(nd:DELTAV, SUN:POSITION). //points to node, expose panels to the sun.
 LOCK STEERING TO np.
 
 DECLARE LOCAL tset IS 0.
@@ -24,25 +28,27 @@ WAIT UNTIL nd:ETA <= (burn_duration / 2).
 DECLARE LOCAL done IS False.
 DECLARE LOCAL dv0 IS nd:DELTAV.
 UNTIL done {
-    UNTIL SHIP:MAXTHRUST > 0 {
-        STAGE.
-        WAIT 1.
-    }
     // Recalculate current max_acceleration, as it changes while we burn through fuel
     SET max_acc TO SHIP:MAXTHRUST / SHIP:MASS.
     // Point back along our burn vector
-    SET np TO nd:DELTAV.
+    SET np TO LOOKDIRUP(nd:DELTAV, SUN:POSITION).
 
     // We're done once our initial pointing direction and our current one diverge.
-    IF VDOT(dv0, np) < 0.5 {
-        LOCK THROTTLE TO 0.
+    IF VDOT(dv0, np:FOREVECTOR) < 0.5 {
+        SET tset TO 0.
         BREAK.
     }
 
     // Throttle is 100% until there is less than a second of burn left.
-    SET tset TO CLAMP(0.05, 1, SQRT(np:MAG / max_acc)).
+    SET tset TO CLAMP(0.05, 1, SQRT(nd:DELTAV:MAG / max_acc)).
 }
-print "End burn, remain dv " + round(nd:deltav:mag,1) + "m/s".
+print "End burn, remain dv " + round(nd:DELTAV:MAG,1) + "m/s".
+UNLOCK STEERING.
+UNLOCK THROTTLE.
+SET SHIP:CONTROL:PILOTMAINTHROTTLE TO 0.
+SAS ON.
+WAIT 0.
+
 
 FUNCTION CLAMP {
     PARAMETER lo.
