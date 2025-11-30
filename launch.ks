@@ -118,32 +118,19 @@ WAIT UNTIL ALT:RADAR > tower.
 SET currentStatus TO "Roll program".
 LOCK STEERING to HEADING(MOD(downrange + 180, 360), 90).
 
-WAIT UNTIL SHIP:VELOCITY:SURFACE:MAG > 100.
+WAIT UNTIL SHIP:VELOCITY:SURFACE:MAG > 50.
 
 // As soon as we get a little bit of speed, pitch over.
 DECLARE LOCAL aimVector IS SHIP:UP.
 LOCK STEERING TO aimVector. // Rotated in tick().
 
 // Don't let dynamic pressure exceed 30 kPa, drag accumulates rapidly.
-DECLARE LOCAL maxQPid is PIDLOOP(0.1, 0, 0.03, 0, 1).
+DECLARE LOCAL maxQPid is PIDLOOP(0.1, 0, 0, 0.6, 1).
 SET maxQPid:SETPOINT to 30.
 
-// Drive the throttle based on the desired ETA to apoapsis,
-DECLARE LOCAL apogeePid is PIDLOOP(1, 0, 0.03, 0, 1).
-SET apogeePid:SETPOINT TO desiredEta().
-
-UNTIL SHIP:ORBIT:APOAPSIS >= desiredAp OR (SHIP:ALTITUDE >= 70000 AND throttleOut = 0) {
-    SET currentStatus TO "Throttle for " + ROUND(desiredEta(), 1) + "s to apogee".
-    SET apogeePid:SETPOINT TO desiredEta().
-    IF airPitch() > 0 {
-        SET throttleOut TO MIN(
-            maxQPid:UPDATE(TIME:SECONDS, ADDONS:FAR:DYNPRES),
-            apogeePid:UPDATE(TIME:SECONDS, SHIP:ORBIT:ETA:APOAPSIS)
-        ).
-    } ELSE {
-        // Assume we're over the hump, circularize ASAP.
-        SET throttleOut TO 1.
-    }
+// Drive ballistically over the hump, and then pitch for our apoapsis
+UNTIL SHIP:ORBIT:ETA:APOAPSIS < 1 {
+    SET throttleOut TO maxQPid:UPDATE(TIME:SECONDS, ADDONS:FAR:DYNPRES).
     tick().
 }
 
@@ -159,19 +146,6 @@ FUNCTION CLAMP {
     PARAMETER hi.
     PARAMETER val.
     RETURN MAX(lo, MIN(hi, val)).
-}
-
-FUNCTION desiredEta {
-    // Rapidly shallow out our ETA as we approach the target apoapsis.
-    DECLARE LOCAL des IS 30 + 15 * (1 - SHIP:VELOCITY:ORBIT:MAG / orbitalVelocity).
-    // Pad for SRBs so we don't have a bunch of idle time when they burn out.
-    FOR e IN SHIP:ENGINES {
-        IF e:IGNITION AND e:THROTTLELOCK {
-            SET des TO des - 15.
-            BREAK.
-        }
-    }
-    RETURN des.
 }
 
 // From https://github.com/KSP-KOS/KSLib/blob/master/library/lib_navball.ks
@@ -241,13 +215,20 @@ FUNCTION blendHeading {
     // Do so very carefully.
     DECLARE local desiredHeading IS HEADING(
         MODCIRCLE(orbitalHeading() - 2 * turnTo(orbitalHeading(), downrange)),
-        CLAMP(5, 85, airPitch() + pitchTrim())
+        CLAMP(0, 85, airPitch() + pitchTrim())
     ):FOREVECTOR.
     SET aimVector TO LOOKDIRUP(desiredHeading, BODY:POSITION).
 }
 
 FUNCTION pitchTrim {
-    RETURN CLAMP(0, 10, (desiredEta() - SHIP:ORBIT:ETA:APOAPSIS)).
+    if throttleOut < 0.1 {
+        RETURN 0.
+    }
+    DECLARE LOCAL pitchup IS 0.
+    IF SHIP:VERTICALSPEED <= 0 {
+        SET pitchup TO 20.
+    }
+    RETURN CLAMP(-30, pitchup, (desiredAp + 1000 - SHIP:ORBIT:APOAPSIS) / 100).
 }
 
 FUNCTION staging {    
@@ -267,6 +248,7 @@ FUNCTION staging {
         DECLARE LOCAL lastThrottle IS throttleOut.
         SET throttleOut TO 0.
         STAGE.
+        WAIT 1.
         SET throttleOut TO lastThrottle.
     }
 }
